@@ -30,6 +30,29 @@ h1 {
   text-transform: uppercase;
 }
 
+#mode-select {
+  display: flex;
+  border: 1px solid #252535;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.mode-btn {
+  background: none;
+  border: none;
+  color: #444;
+  font-family: inherit;
+  font-size: 0.7rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  padding: 7px 24px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mode-btn.active { background: rgba(0,229,255,0.08); color: #00e5ff; }
+.mode-btn:hover:not(.active) { color: #666; }
+
 #hud {
   display: flex;
   align-items: baseline;
@@ -58,9 +81,7 @@ h1 {
   text-transform: uppercase;
 }
 
-#best-line span {
-  color: #555;
-}
+#best-line span { color: #555; }
 
 #hands-svg {
   width: min(700px, 96vw);
@@ -91,6 +112,11 @@ h1 {
 
 <h1>Simon Keys</h1>
 
+<div id="mode-select">
+  <button class="mode-btn active" data-mode="simon">Simon</button>
+  <button class="mode-btn" data-mode="react">React</button>
+</div>
+
 <div id="hud">
   <span id="round-num">—</span>
   <span id="status-msg">home row trainer</span>
@@ -116,17 +142,15 @@ h1 {
 <button id="start-btn">Press SPACE to start</button>
 
 <script>
-// ── Key / finger definitions ──────────────────────────────────────────────────
+// ── Finger / key definitions ──────────────────────────────────────────────────
 // Standard typing-tutor color convention: same finger type = same color.
-// idle: dark tint visible against the palm; active: bright saturated version.
 const COLOR = {
-  index:  { idle: '#1a2540', active: '#6eb0ff' },  // blue
-  middle: { idle: '#142814', active: '#6dd98f' },  // green
-  ring:   { idle: '#2e2508', active: '#ffd84d' },  // amber
-  pinky:  { idle: '#2e1212', active: '#ff6b6b' },  // red
+  index:  { idle: '#1a2540', active: '#6eb0ff' },
+  middle: { idle: '#142814', active: '#6dd98f' },
+  ring:   { idle: '#2e2508', active: '#ffd84d' },
+  pinky:  { idle: '#2e1212', active: '#ff6b6b' },
 };
 
-// Each key: { id, label, xl (left x), xr (right x), yt (tip y), color }
 // Left hand:  A=pinky, S=ring, D=middle, F=index  (left→right)
 // Right hand: J=index, K=middle, L=ring, ;=pinky  (left→right)
 const KEYS = [
@@ -144,10 +168,9 @@ const FINGER_BOTTOM = 172; // overlap palm top edge (162) by 10px
 const FINGER_RX     = 9;
 const NS            = 'http://www.w3.org/2000/svg';
 
-// ── Build SVG finger shapes ───────────────────────────────────────────────────
+// ── Build SVG ─────────────────────────────────────────────────────────────────
 function fingerPath(xl, xr, yt) {
   const yb = FINGER_BOTTOM, r = FINGER_RX;
-  // Rounded top, flat bottom
   return `M${xl},${yb} L${xl},${yt+r} Q${xl},${yt} ${xl+r},${yt}` +
          ` L${xr-r},${yt} Q${xr},${yt} ${xr},${yt+r} L${xr},${yb}Z`;
 }
@@ -162,40 +185,59 @@ function svgEl(tag, attrs, text) {
 const group = document.getElementById('fingers-group');
 KEYS.forEach(k => {
   group.appendChild(svgEl('path', {
-    id:   'fp-' + k.id,
-    d:    fingerPath(k.xl, k.xr, k.yt),
-    fill: k.color.idle,
+    id: 'fp-' + k.id, d: fingerPath(k.xl, k.xr, k.yt), fill: k.color.idle,
   }));
   group.appendChild(svgEl('text', {
-    id:               'fl-' + k.id,
-    x:                (k.xl + k.xr) / 2,
-    y:                k.yt + 22,
-    'text-anchor':    'middle',
-    fill:             k.color.active,
-    'fill-opacity':   '0.4',
-    'font-family':    'Courier New, monospace',
-    'font-size':      '12',
-    'font-weight':    'bold',
-    'pointer-events': 'none',
+    id: 'fl-' + k.id,
+    x: (k.xl + k.xr) / 2, y: k.yt + 22,
+    'text-anchor': 'middle', fill: k.color.active, 'fill-opacity': '0.4',
+    'font-family': 'Courier New, monospace', 'font-size': '12',
+    'font-weight': 'bold', 'pointer-events': 'none',
   }, k.label));
 });
 
-// ── Game state ────────────────────────────────────────────────────────────────
-let sequence   = [];
-let playerIdx  = 0;
-let phase      = 'idle';   // idle | showing | input | wait | gameover
-let inputLock  = false;
-let gen        = 0;        // generation counter – cancels stale async chains
-let highScore  = 0;
+// ── State ─────────────────────────────────────────────────────────────────────
+let mode      = 'simon';  // 'simon' | 'react'
+let phase     = 'idle';   // idle | showing | input | wait | gameover
+let inputLock = false;
+let gen       = 0;        // incremented on every startGame(); cancels stale async chains
 
+// Simon state
+let sequence  = [];
+let playerIdx = 0;
+let simonBest = 0;
+
+// React state
+let reactScore  = 0;
+let reactTarget = null;  // id of the currently lit key
+let reactLitAt  = 0;     // performance.now() when finger was lit
+
+// React high score persists in localStorage
+const LS_KEY        = 'simon-keys-react-best';
+const getReactBest  = ()  => parseInt(localStorage.getItem(LS_KEY) || '0', 10);
+const saveReactBest = (s) => {
+  if (s > getReactBest()) { localStorage.setItem(LS_KEY, String(s)); return true; }
+  return false;
+};
+
+// ── DOM ───────────────────────────────────────────────────────────────────────
 const roundEl  = document.getElementById('round-num');
 const statusEl = document.getElementById('status-msg');
 const bestEl   = document.getElementById('best-num');
+const startBtn = document.getElementById('start-btn');
 
-const setRound  = n  => roundEl.textContent  = n > 0 ? n : '—';
 const setStatus = s  => statusEl.textContent = s;
-const setBest   = n  => bestEl.textContent   = n > 0 ? n : '—';
 const sleep     = ms => new Promise(r => setTimeout(r, ms));
+
+function setRound(n) {
+  // React mode: 0 is a valid score; Simon mode: 0 shows as dash
+  roundEl.textContent = (mode === 'simon' && n === 0) ? '—' : n;
+}
+
+function refreshBest() {
+  const b = mode === 'simon' ? simonBest : getReactBest();
+  bestEl.textContent = b > 0 ? b : '—';
+}
 
 // ── Finger visuals ────────────────────────────────────────────────────────────
 function setFinger(id, state) {
@@ -222,26 +264,52 @@ function setFinger(id, state) {
   }
 }
 
-function resetFingers() {
-  KEYS.forEach(k => setFinger(k.id, 'off'));
-}
+function resetFingers() { KEYS.forEach(k => setFinger(k.id, 'off')); }
 
-// ── Core game logic ───────────────────────────────────────────────────────────
+// ── Mode switching ────────────────────────────────────────────────────────────
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (mode === btn.dataset.mode) return;
+    mode = btn.dataset.mode;
+    document.querySelectorAll('.mode-btn').forEach(b =>
+      b.classList.toggle('active', b === btn));
+    gen++;
+    phase = 'idle';
+    inputLock = false;
+    reactTarget = null;
+    resetFingers();
+    setRound(0);
+    setStatus(mode === 'simon' ? 'home row trainer' : 'reaction trainer');
+    refreshBest();
+    startBtn.textContent = 'Press SPACE to start';
+  });
+});
+
+// ── Start / restart ───────────────────────────────────────────────────────────
 function startGame() {
   gen++;
-  sequence  = [];
-  playerIdx = 0;
+  phase     = 'idle';
   inputLock = false;
-  setRound(0);
-  document.getElementById('start-btn').textContent = 'Press SPACE to restart';
   resetFingers();
-  grow(gen);
+  startBtn.textContent = 'Press SPACE to restart';
+
+  if (mode === 'simon') {
+    sequence  = [];
+    playerIdx = 0;
+    setRound(0);
+    grow(gen);
+  } else {
+    reactScore  = 0;
+    reactTarget = null;
+    setRound(0);
+    beginReact(gen);
+  }
 }
 
+// ── Simon mode ────────────────────────────────────────────────────────────────
 function grow(g) {
   if (gen !== g) return;
-  const pick = KEYS[Math.floor(Math.random() * KEYS.length)];
-  sequence.push(pick.id);
+  sequence.push(KEYS[Math.floor(Math.random() * KEYS.length)].id);
   setRound(sequence.length);
   playSequence(g);
 }
@@ -251,9 +319,9 @@ async function playSequence(g) {
   phase = 'showing';
   setStatus('watch...');
 
-  const lvl  = sequence.length;
-  const onMs = Math.max(260, 580 - lvl * 14);
-  const offMs= Math.max(55,  125 - lvl *  5);
+  const lvl   = sequence.length;
+  const onMs  = Math.max(260, 580 - lvl * 14);
+  const offMs = Math.max(55,  125 - lvl *  5);
 
   await sleep(400);
   if (gen !== g) return;
@@ -270,42 +338,84 @@ async function playSequence(g) {
   await sleep(220);
   if (gen !== g) return;
 
-  phase      = 'input';
-  playerIdx  = 0;
-  inputLock  = false;
+  phase     = 'input';
+  playerIdx = 0;
+  inputLock = false;
   setStatus('your turn');
 }
 
-// ── Keyboard input ────────────────────────────────────────────────────────────
+// ── React mode ────────────────────────────────────────────────────────────────
+function beginReact(g) {
+  if (gen !== g) return;
+  setStatus('react!');
+  lightNext(g);
+}
+
+function lightNext(g) {
+  if (gen !== g) return;
+  const target = KEYS[Math.floor(Math.random() * KEYS.length)];
+  reactTarget = target.id;
+  reactLitAt  = performance.now();
+  phase       = 'input';
+  inputLock   = false;
+  setFinger(target.id, 'active');
+}
+
+// Points decrease linearly with reaction time; floor at 1
+function reactionPts(ms) { return Math.max(1, Math.round(1000 - ms * 1.2)); }
+
+// ── Keyboard ──────────────────────────────────────────────────────────────────
 document.addEventListener('keydown', async e => {
   const raw = e.key;
 
-  // Space starts / restarts from idle or game-over
   if (raw === ' ') {
     e.preventDefault();
     if (phase === 'idle' || phase === 'gameover') startGame();
     return;
   }
 
-  // Map semicolon (and colon from accidental shift) to the game key
   const key = (raw === ';' || raw === ':') ? ';' : raw.toLowerCase();
-
   if (!KEYS.find(k => k.id === key)) return;
   e.preventDefault();
 
-  if (phase === 'idle' || phase === 'gameover') {
-    startGame();
+  if (phase === 'idle' || phase === 'gameover') { startGame(); return; }
+  if (phase !== 'input' || inputLock) return;
+
+  inputLock = true;
+  const myGen = gen;
+
+  // ── React branch ──────────────────────────────────────────────────────────
+  if (mode === 'react') {
+    const ms  = performance.now() - reactLitAt;
+    const was = reactTarget;
+    setFinger(was, 'off');
+
+    if (key === was) {
+      const pts = reactionPts(ms);
+      reactScore += pts;
+      setRound(reactScore);
+      setStatus(`+${pts}`);
+      await sleep(90);
+      if (gen !== myGen) return;
+      setStatus('react!');
+      lightNext(myGen);
+    } else {
+      phase = 'gameover';
+      setFinger(key, 'wrong');
+      const isNew = saveReactBest(reactScore);
+      refreshBest();
+      await sleep(750);
+      if (gen !== myGen) return;
+      setFinger(key, 'off');
+      setStatus(isNew
+        ? `new best: ${reactScore} — press space`
+        : `wrong key — press space`);
+    }
     return;
   }
 
-  if (phase !== 'input' || inputLock) return;
-  inputLock = true;
-
-  const myGen    = gen;
-  const expected = sequence[playerIdx];
-
-  if (key === expected) {
-    // Correct key
+  // ── Simon branch ──────────────────────────────────────────────────────────
+  if (key === sequence[playerIdx]) {
     setFinger(key, 'active');
     await sleep(155);
     if (gen !== myGen) return;
@@ -313,11 +423,7 @@ document.addEventListener('keydown', async e => {
     playerIdx++;
 
     if (playerIdx === sequence.length) {
-      // Round complete
-      if (sequence.length > highScore) {
-        highScore = sequence.length;
-        setBest(highScore);
-      }
+      if (sequence.length > simonBest) { simonBest = sequence.length; refreshBest(); }
       phase = 'wait';
       setStatus('nice!');
       await sleep(620);
@@ -327,17 +433,16 @@ document.addEventListener('keydown', async e => {
       inputLock = false;
     }
   } else {
-    // Wrong key
     phase = 'gameover';
     setFinger(key, 'wrong');
     await sleep(750);
     if (gen !== myGen) return;
     setFinger(key, 'off');
-    setStatus('wrong key — press start');
+    setStatus('wrong key — press space');
   }
 });
 
-document.getElementById('start-btn').addEventListener('click', startGame);
+startBtn.addEventListener('click', startGame);
 </script>
 </body>
 </html>
