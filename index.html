@@ -16,7 +16,7 @@ body {
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  gap: 18px;
+  gap: 14px;
   padding: 20px;
   user-select: none;
   -webkit-user-select: none;
@@ -30,14 +30,16 @@ h1 {
   text-transform: uppercase;
 }
 
-#mode-select {
+#mode-select, #diff-select {
   display: flex;
   border: 1px solid #252535;
   border-radius: 3px;
   overflow: hidden;
 }
 
-.mode-btn {
+#diff-select { display: none; }
+
+.mode-btn, .diff-btn {
   background: none;
   border: none;
   color: #444;
@@ -45,13 +47,13 @@ h1 {
   font-size: 0.7rem;
   letter-spacing: 0.3em;
   text-transform: uppercase;
-  padding: 7px 24px;
+  padding: 7px 22px;
   cursor: pointer;
   transition: all 0.15s;
 }
 
-.mode-btn.active { background: rgba(0,229,255,0.08); color: #00e5ff; }
-.mode-btn:hover:not(.active) { color: #666; }
+.mode-btn.active, .diff-btn.active { background: rgba(0,229,255,0.08); color: #00e5ff; }
+.mode-btn:hover:not(.active), .diff-btn:hover:not(.active) { color: #666; }
 
 #hud {
   display: flex;
@@ -83,11 +85,13 @@ h1 {
 
 #best-line span { color: #555; }
 
-#hands-svg {
+#balloon-svg, #hands-svg {
   width: min(700px, 96vw);
   height: auto;
   display: block;
 }
+
+#balloon-svg { display: none; }
 
 #start-btn {
   background: none;
@@ -115,12 +119,32 @@ h1 {
 <div id="mode-select">
   <button class="mode-btn active" data-mode="simon">Simon</button>
   <button class="mode-btn" data-mode="react">React</button>
+  <button class="mode-btn" data-mode="keepy">Keepy</button>
+</div>
+
+<div id="diff-select">
+  <button class="diff-btn" data-diff="easy">Easy</button>
+  <button class="diff-btn active" data-diff="medium">Medium</button>
+  <button class="diff-btn" data-diff="hard">Hard</button>
 </div>
 
 <div id="hud">
   <span id="round-num">—</span>
   <span id="status-msg">home row trainer</span>
 </div>
+
+<!-- Balloon play area — shown only in Keepy mode -->
+<svg id="balloon-svg" viewBox="0 0 700 160" xmlns="http://www.w3.org/2000/svg">
+  <line x1="60" y1="155" x2="640" y2="155" stroke="#1e1e30" stroke-width="1.5"/>
+  <g id="balloon-group">
+    <line id="balloon-string" x1="350" y1="106" x2="350" y2="126"
+          stroke="#555" stroke-width="1.5" stroke-linecap="round"/>
+    <circle id="balloon-knot"  cx="350" cy="104" r="3.5" fill="#b84480"/>
+    <circle id="balloon-body"  cx="350" cy="80"  r="24"  fill="#ff6eb4"/>
+    <circle id="balloon-shine" cx="342" cy="70"  r="7"   fill="rgba(255,255,255,0.30)"
+            pointer-events="none"/>
+  </g>
+</svg>
 
 <svg id="hands-svg" viewBox="0 0 700 310" xmlns="http://www.w3.org/2000/svg">
   <defs>
@@ -129,12 +153,8 @@ h1 {
       <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
   </defs>
-
-  <!-- Palms (drawn first, fingers will overlap the top edge) -->
   <rect x="60"  y="162" width="228" height="132" rx="20" fill="#16162a"/>
   <rect x="412" y="162" width="228" height="132" rx="20" fill="#16162a"/>
-
-  <!-- Fingers are injected by JS -->
   <g id="fingers-group"></g>
 </svg>
 
@@ -143,7 +163,6 @@ h1 {
 
 <script>
 // ── Finger / key definitions ──────────────────────────────────────────────────
-// Standard typing-tutor color convention: same finger type = same color.
 const COLOR = {
   index:  { idle: '#1a2540', active: '#6eb0ff' },
   middle: { idle: '#142814', active: '#6dd98f' },
@@ -151,8 +170,6 @@ const COLOR = {
   pinky:  { idle: '#2e1212', active: '#ff6b6b' },
 };
 
-// Left hand:  A=pinky, S=ring, D=middle, F=index  (left→right)
-// Right hand: J=index, K=middle, L=ring, ;=pinky  (left→right)
 const KEYS = [
   { id:'a', label:'A', xl: 65, xr:103, yt: 82, color: COLOR.pinky  },
   { id:'s', label:'S', xl:113, xr:151, yt: 62, color: COLOR.ring   },
@@ -164,11 +181,66 @@ const KEYS = [
   { id:';', label:';', xl:597, xr:635, yt: 82, color: COLOR.pinky  },
 ];
 
-const FINGER_BOTTOM = 172; // overlap palm top edge (162) by 10px
+const FINGER_BOTTOM = 172;
 const FINGER_RX     = 9;
 const NS            = 'http://www.w3.org/2000/svg';
 
-// ── Build SVG ─────────────────────────────────────────────────────────────────
+// ── Balloon / Keepy constants ─────────────────────────────────────────────────
+const BALLOON_R     = 24;
+const BALLOON_CEIL  = 27;   // min center y (ceiling)
+const BALLOON_FLOOR = 133;  // max center y — bottom of balloon at y=157, at the floor line
+const BALLOON_START = 80;
+
+// gravity: px/frame², bounce: initial upward px/frame (negative = up)
+const DIFFICULTY = {
+  easy:   { gravity: 0.055, bounce: -7.0  },
+  medium: { gravity: 0.120, bounce: -8.5  },
+  hard:   { gravity: 0.220, bounce: -10.5 },
+};
+
+const MODES = ['simon', 'react', 'keepy'];
+const DIFFS = ['easy', 'medium', 'hard'];
+
+// ── Game state ────────────────────────────────────────────────────────────────
+let mode       = 'simon';
+let difficulty = 'medium';
+let phase      = 'idle';   // idle | showing | input | wait | gameover
+let inputLock  = false;
+let gen        = 0;        // incremented on startGame; all async chains check this
+
+// Simon
+let sequence  = [];
+let playerIdx = 0;
+let simonBest = 0;
+
+// React + Keepy share the "active target" pattern
+let reactScore  = 0;
+let reactTarget = null;   // id of the currently lit finger
+let reactLitAt  = 0;      // performance.now() when finger lit (React only)
+
+// Keepy
+let keepyScore = 0;
+let balloonY   = BALLOON_START;
+let balloonVY  = 0;
+let rafId      = null;
+
+// ── LocalStorage ──────────────────────────────────────────────────────────────
+function makeLS(key) {
+  return {
+    get:  ()  => parseInt(localStorage.getItem(key) || '0', 10),
+    save: (s) => {
+      if (s > parseInt(localStorage.getItem(key) || '0', 10)) {
+        localStorage.setItem(key, String(s));
+        return true;
+      }
+      return false;
+    },
+  };
+}
+const reactLS = makeLS('simon-keys-react-best');
+const keepyLS = makeLS('simon-keys-keepy-best');
+
+// ── Build SVG fingers ─────────────────────────────────────────────────────────
 function fingerPath(xl, xr, yt) {
   const yb = FINGER_BOTTOM, r = FINGER_RX;
   return `M${xl},${yb} L${xl},${yt+r} Q${xl},${yt} ${xl+r},${yt}` +
@@ -188,54 +260,32 @@ KEYS.forEach(k => {
     id: 'fp-' + k.id, d: fingerPath(k.xl, k.xr, k.yt), fill: k.color.idle,
   }));
   group.appendChild(svgEl('text', {
-    id: 'fl-' + k.id,
-    x: (k.xl + k.xr) / 2, y: k.yt + 22,
+    id: 'fl-' + k.id, x: (k.xl + k.xr) / 2, y: k.yt + 22,
     'text-anchor': 'middle', fill: k.color.active, 'fill-opacity': '0.4',
     'font-family': 'Courier New, monospace', 'font-size': '12',
     'font-weight': 'bold', 'pointer-events': 'none',
   }, k.label));
 });
 
-// ── State ─────────────────────────────────────────────────────────────────────
-let mode      = 'simon';  // 'simon' | 'react'
-let phase     = 'idle';   // idle | showing | input | wait | gameover
-let inputLock = false;
-let gen       = 0;        // incremented on every startGame(); cancels stale async chains
-
-// Simon state
-let sequence  = [];
-let playerIdx = 0;
-let simonBest = 0;
-
-// React state
-let reactScore  = 0;
-let reactTarget = null;  // id of the currently lit key
-let reactLitAt  = 0;     // performance.now() when finger was lit
-
-// React high score persists in localStorage
-const LS_KEY        = 'simon-keys-react-best';
-const getReactBest  = ()  => parseInt(localStorage.getItem(LS_KEY) || '0', 10);
-const saveReactBest = (s) => {
-  if (s > getReactBest()) { localStorage.setItem(LS_KEY, String(s)); return true; }
-  return false;
-};
-
-// ── DOM ───────────────────────────────────────────────────────────────────────
-const roundEl  = document.getElementById('round-num');
-const statusEl = document.getElementById('status-msg');
-const bestEl   = document.getElementById('best-num');
-const startBtn = document.getElementById('start-btn');
+// ── DOM refs ──────────────────────────────────────────────────────────────────
+const roundEl    = document.getElementById('round-num');
+const statusEl   = document.getElementById('status-msg');
+const bestEl     = document.getElementById('best-num');
+const startBtn   = document.getElementById('start-btn');
+const balloonSvg = document.getElementById('balloon-svg');
+const diffSelect = document.getElementById('diff-select');
 
 const setStatus = s  => statusEl.textContent = s;
 const sleep     = ms => new Promise(r => setTimeout(r, ms));
 
 function setRound(n) {
-  // React mode: 0 is a valid score; Simon mode: 0 shows as dash
   roundEl.textContent = (mode === 'simon' && n === 0) ? '—' : n;
 }
 
 function refreshBest() {
-  const b = mode === 'simon' ? simonBest : getReactBest();
+  const b = mode === 'simon' ? simonBest
+          : mode === 'react' ? reactLS.get()
+          : keepyLS.get();
   bestEl.textContent = b > 0 ? b : '—';
 }
 
@@ -245,7 +295,6 @@ function setFinger(id, state) {
   const label = document.getElementById('fl-' + id);
   const key   = KEYS.find(k => k.id === id);
   if (!path || !key) return;
-
   if (state === 'active') {
     path.setAttribute('fill', key.color.active);
     path.setAttribute('filter', 'url(#glow)');
@@ -266,30 +315,50 @@ function setFinger(id, state) {
 
 function resetFingers() { KEYS.forEach(k => setFinger(k.id, 'off')); }
 
-// ── Mode switching ────────────────────────────────────────────────────────────
-document.querySelectorAll('.mode-btn').forEach(btn => {
+// ── Mode & difficulty switching ───────────────────────────────────────────────
+function switchMode(newMode) {
+  if (mode === newMode) return;
+  mode = newMode;
+  document.querySelectorAll('.mode-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.mode === newMode));
+  gen++;
+  stopBalloon();
+  phase       = 'idle';
+  inputLock   = false;
+  reactTarget = null;
+  resetFingers();
+  setRound(0);
+  setStatus(newMode === 'simon' ? 'home row trainer'
+          : newMode === 'react' ? 'reaction trainer'
+          : 'keepy uppy');
+  refreshBest();
+  startBtn.textContent = 'Press SPACE to start';
+  balloonSvg.style.display = newMode === 'keepy' ? 'block' : 'none';
+  diffSelect.style.display  = newMode === 'keepy' ? 'flex'  : 'none';
+  if (newMode === 'keepy') resetBalloon();
+}
+
+function switchDifficulty(newDiff) {
+  difficulty = newDiff;
+  document.querySelectorAll('.diff-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.diff === newDiff));
+}
+
+document.querySelectorAll('.mode-btn').forEach(btn =>
+  btn.addEventListener('click', () => switchMode(btn.dataset.mode)));
+
+document.querySelectorAll('.diff-btn').forEach(btn =>
   btn.addEventListener('click', () => {
-    if (mode === btn.dataset.mode) return;
-    mode = btn.dataset.mode;
-    document.querySelectorAll('.mode-btn').forEach(b =>
-      b.classList.toggle('active', b === btn));
-    gen++;
-    phase = 'idle';
-    inputLock = false;
-    reactTarget = null;
-    resetFingers();
-    setRound(0);
-    setStatus(mode === 'simon' ? 'home row trainer' : 'reaction trainer');
-    refreshBest();
-    startBtn.textContent = 'Press SPACE to start';
-  });
-});
+    if (phase !== 'idle' && phase !== 'gameover') return;
+    switchDifficulty(btn.dataset.diff);
+  }));
 
 // ── Start / restart ───────────────────────────────────────────────────────────
 function startGame() {
   gen++;
-  phase     = 'idle';
-  inputLock = false;
+  phase       = 'idle';
+  inputLock   = false;
+  reactTarget = null;
   resetFingers();
   startBtn.textContent = 'Press SPACE to restart';
 
@@ -298,11 +367,14 @@ function startGame() {
     playerIdx = 0;
     setRound(0);
     grow(gen);
-  } else {
-    reactScore  = 0;
-    reactTarget = null;
+  } else if (mode === 'react') {
+    reactScore = 0;
     setRound(0);
     beginReact(gen);
+  } else {
+    keepyScore = 0;
+    setRound(0);
+    beginKeepy(gen);
   }
 }
 
@@ -318,14 +390,11 @@ async function playSequence(g) {
   if (gen !== g) return;
   phase = 'showing';
   setStatus('watch...');
-
   const lvl   = sequence.length;
   const onMs  = Math.max(260, 580 - lvl * 14);
   const offMs = Math.max(55,  125 - lvl *  5);
-
   await sleep(400);
   if (gen !== g) return;
-
   for (const id of sequence) {
     setFinger(id, 'active');
     await sleep(onMs);
@@ -334,10 +403,8 @@ async function playSequence(g) {
     await sleep(offMs);
     if (gen !== g) return;
   }
-
   await sleep(220);
   if (gen !== g) return;
-
   phase     = 'input';
   playerIdx = 0;
   inputLock = false;
@@ -348,25 +415,146 @@ async function playSequence(g) {
 function beginReact(g) {
   if (gen !== g) return;
   setStatus('react!');
-  lightNext(g);
+  lightNextReact(g);
 }
 
-function lightNext(g) {
+function lightNextReact(g) {
   if (gen !== g) return;
-  const target = KEYS[Math.floor(Math.random() * KEYS.length)];
-  reactTarget = target.id;
+  const t = KEYS[Math.floor(Math.random() * KEYS.length)];
+  reactTarget = t.id;
   reactLitAt  = performance.now();
   phase       = 'input';
   inputLock   = false;
-  setFinger(target.id, 'active');
+  setFinger(t.id, 'active');
 }
 
-// Points decrease linearly with reaction time; floor at 1
 function reactionPts(ms) { return Math.max(1, Math.round(1000 - ms * 1.2)); }
+
+// ── Keepy Uppy mode ───────────────────────────────────────────────────────────
+function resetBalloon() {
+  balloonY  = BALLOON_START;
+  balloonVY = 0;
+  const grp = document.getElementById('balloon-group');
+  if (grp) grp.style.visibility = 'visible';
+  const body = document.getElementById('balloon-body');
+  if (body) {
+    body.setAttribute('r', String(BALLOON_R));
+    body.setAttribute('fill', '#ff6eb4');
+  }
+  const shine = document.getElementById('balloon-shine');
+  if (shine) shine.setAttribute('r', '7');
+  updateBalloonPos();
+}
+
+function updateBalloonPos() {
+  const cy = balloonY;
+  document.getElementById('balloon-body') .setAttribute('cy', cy);
+  document.getElementById('balloon-shine').setAttribute('cy', cy - 10);
+  document.getElementById('balloon-knot') .setAttribute('cy', cy + BALLOON_R + 2);
+  document.getElementById('balloon-string').setAttribute('y1', cy + BALLOON_R + 5);
+  document.getElementById('balloon-string').setAttribute('y2', cy + BALLOON_R + 22);
+}
+
+function stopBalloon() {
+  if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+}
+
+function beginKeepy(g) {
+  if (gen !== g) return;
+  resetBalloon();
+  setStatus('');
+  // Light first finger, then start physics
+  lightNextKeepy(g);
+  rafId = requestAnimationFrame(makeKeepyTick(g));
+}
+
+function lightNextKeepy(g) {
+  if (gen !== g) return;
+  const t = KEYS[Math.floor(Math.random() * KEYS.length)];
+  reactTarget = t.id;
+  phase       = 'input';
+  inputLock   = false;
+  setFinger(t.id, 'active');
+}
+
+function makeKeepyTick(g) {
+  function tick() {
+    if (gen !== g) return;
+    const { gravity } = DIFFICULTY[difficulty];
+    balloonVY += gravity;
+    balloonY  += balloonVY;
+
+    if (balloonY >= BALLOON_FLOOR) {
+      balloonY = BALLOON_FLOOR;
+      updateBalloonPos();
+      keepyOver(g, null);   // floor hit — no wrong key
+      return;
+    }
+
+    if (balloonY < BALLOON_CEIL) {
+      balloonY  = BALLOON_CEIL;
+      balloonVY = 0;
+    }
+
+    updateBalloonPos();
+    rafId = requestAnimationFrame(tick);
+  }
+  return tick;
+}
+
+async function keepyOver(g, wrongKey) {
+  if (gen !== g || phase === 'gameover') return;
+  phase = 'gameover';
+  stopBalloon();
+  if (reactTarget) { setFinger(reactTarget, 'off'); reactTarget = null; }
+  if (wrongKey)    setFinger(wrongKey, 'wrong');
+
+  // Pop: flash white + expand, then hide
+  const body  = document.getElementById('balloon-body');
+  const shine = document.getElementById('balloon-shine');
+  if (body) {
+    body.setAttribute('fill', '#fff');
+    body.setAttribute('r', String(BALLOON_R + 12));
+    shine.setAttribute('r', '0');
+  }
+  await sleep(110);
+  if (gen !== g) return;
+  document.getElementById('balloon-group').style.visibility = 'hidden';
+
+  if (wrongKey) {
+    await sleep(400);
+    if (gen !== g) return;
+    setFinger(wrongKey, 'off');
+  }
+
+  const isNew = keepyLS.save(keepyScore);
+  refreshBest();
+  setStatus(isNew
+    ? `new best: ${keepyScore} — press space`
+    : wrongKey ? 'wrong key — press space' : 'balloon popped — press space');
+}
 
 // ── Keyboard ──────────────────────────────────────────────────────────────────
 document.addEventListener('keydown', async e => {
   const raw = e.key;
+
+  // Left / Right: cycle mode
+  if (raw === 'ArrowLeft' || raw === 'ArrowRight') {
+    e.preventDefault();
+    const d = raw === 'ArrowRight' ? 1 : -1;
+    switchMode(MODES[(MODES.indexOf(mode) + d + MODES.length) % MODES.length]);
+    return;
+  }
+
+  // Up / Down: cycle difficulty (only when not actively playing)
+  if (raw === 'ArrowUp' || raw === 'ArrowDown') {
+    e.preventDefault();
+    if (phase === 'idle' || phase === 'gameover') {
+      const d = raw === 'ArrowDown' ? 1 : -1;
+      switchDifficulty(DIFFS[(DIFFS.indexOf(difficulty) + d + DIFFS.length) % DIFFS.length]);
+    }
+    return;
+  }
 
   if (raw === ' ') {
     e.preventDefault();
@@ -379,17 +567,32 @@ document.addEventListener('keydown', async e => {
   e.preventDefault();
 
   if (phase === 'idle' || phase === 'gameover') { startGame(); return; }
-  if (phase !== 'input' || inputLock) return;
+  // Block input if not in input phase, if locked, or if keepy has no active target yet
+  if (phase !== 'input' || inputLock || (mode === 'keepy' && !reactTarget)) return;
 
   inputLock = true;
   const myGen = gen;
+
+  // ── Keepy branch ──────────────────────────────────────────────────────────
+  if (mode === 'keepy') {
+    const was = reactTarget;
+    if (key === was) {
+      setFinger(was, 'off');
+      balloonVY = DIFFICULTY[difficulty].bounce;  // bounce up
+      keepyScore++;
+      setRound(keepyScore);
+      lightNextKeepy(myGen);  // lights new finger, resets inputLock + reactTarget
+    } else {
+      await keepyOver(myGen, key);
+    }
+    return;
+  }
 
   // ── React branch ──────────────────────────────────────────────────────────
   if (mode === 'react') {
     const ms  = performance.now() - reactLitAt;
     const was = reactTarget;
     setFinger(was, 'off');
-
     if (key === was) {
       const pts = reactionPts(ms);
       reactScore += pts;
@@ -398,18 +601,16 @@ document.addEventListener('keydown', async e => {
       await sleep(90);
       if (gen !== myGen) return;
       setStatus('react!');
-      lightNext(myGen);
+      lightNextReact(myGen);
     } else {
       phase = 'gameover';
       setFinger(key, 'wrong');
-      const isNew = saveReactBest(reactScore);
+      const isNew = reactLS.save(reactScore);
       refreshBest();
       await sleep(750);
       if (gen !== myGen) return;
       setFinger(key, 'off');
-      setStatus(isNew
-        ? `new best: ${reactScore} — press space`
-        : `wrong key — press space`);
+      setStatus(isNew ? `new best: ${reactScore} — press space` : 'wrong key — press space');
     }
     return;
   }
@@ -421,7 +622,6 @@ document.addEventListener('keydown', async e => {
     if (gen !== myGen) return;
     setFinger(key, 'off');
     playerIdx++;
-
     if (playerIdx === sequence.length) {
       if (sequence.length > simonBest) { simonBest = sequence.length; refreshBest(); }
       phase = 'wait';
