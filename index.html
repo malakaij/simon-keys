@@ -113,7 +113,7 @@ h1 {
 </svg>
 
 <div id="best-line">best: <span id="best-num">—</span></div>
-<button id="start-btn">Start</button>
+<button id="start-btn">Press SPACE to start</button>
 
 <script>
 // ── Key / finger definitions ──────────────────────────────────────────────────
@@ -233,7 +233,7 @@ function startGame() {
   playerIdx = 0;
   inputLock = false;
   setRound(0);
-  document.getElementById('start-btn').textContent = 'Restart';
+  document.getElementById('start-btn').textContent = 'Press SPACE to restart';
   resetFingers();
   grow(gen);
 }
