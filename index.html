@@ -85,13 +85,11 @@ h1 {
 
 #best-line span { color: #555; }
 
-#balloon-svg, #hands-svg {
-  width: min(700px, 96vw);
+#hands-svg {
+  width: min(780px, 96vw);
   height: auto;
   display: block;
 }
-
-#balloon-svg { display: none; }
 
 #start-btn {
   background: none;
@@ -133,29 +131,30 @@ h1 {
   <span id="status-msg">home row trainer</span>
 </div>
 
-<!-- Balloon play area — shown only in Balloon mode -->
-<svg id="balloon-svg" viewBox="0 0 700 160" xmlns="http://www.w3.org/2000/svg">
-  <line x1="60" y1="155" x2="640" y2="155" stroke="#1e1e30" stroke-width="1.5"/>
-  <g id="balloon-group">
-    <line id="balloon-string" x1="350" y1="106" x2="350" y2="126"
-          stroke="#555" stroke-width="1.5" stroke-linecap="round"/>
-    <circle id="balloon-knot"  cx="350" cy="104" r="3.5" fill="#b84480"/>
-    <circle id="balloon-body"  cx="350" cy="80"  r="24"  fill="#ff6eb4"/>
-    <circle id="balloon-shine" cx="342" cy="70"  r="7"   fill="rgba(255,255,255,0.30)"
-            pointer-events="none"/>
-  </g>
-</svg>
-
-<svg id="hands-svg" viewBox="0 0 700 310" xmlns="http://www.w3.org/2000/svg">
+<!-- Single SVG for all modes. Hands are always shown in the wider layout.
+     Balloon elements live in the center column and are shown only in Balloon mode. -->
+<svg id="hands-svg" viewBox="0 0 780 310" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <filter id="glow" x="-70%" y="-70%" width="240%" height="240%">
       <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="b"/>
       <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
   </defs>
-  <rect x="60"  y="162" width="228" height="132" rx="20" fill="#16162a"/>
-  <rect x="412" y="162" width="228" height="132" rx="20" fill="#16162a"/>
+  <!-- Left palm: x=10, right palm: x=542 — 304px center gap for balloon column -->
+  <rect x="10"  y="162" width="228" height="132" rx="20" fill="#16162a"/>
+  <rect x="542" y="162" width="228" height="132" rx="20" fill="#16162a"/>
   <g id="fingers-group"></g>
+  <!-- Balloon elements (center column x=238–542, cx=390) — hidden until Balloon mode -->
+  <g id="balloon-group" style="display:none">
+    <line id="balloon-floor-line" x1="248" y1="270" x2="532" y2="270"
+          stroke="#1e1e30" stroke-width="1.5"/>
+    <line id="balloon-string" x1="390" y1="169" x2="390" y2="186"
+          stroke="#555" stroke-width="1.5" stroke-linecap="round"/>
+    <circle id="balloon-knot"  cx="390" cy="166" r="3.5" fill="#b84480"/>
+    <circle id="balloon-body"  cx="390" cy="140" r="24"  fill="#ff6eb4"/>
+    <circle id="balloon-shine" cx="382" cy="130" r="7"   fill="rgba(255,255,255,0.30)"
+            pointer-events="none"/>
+  </g>
 </svg>
 
 <div id="best-line">best: <span id="best-num">—</span></div>
@@ -170,32 +169,36 @@ const COLOR = {
   pinky:  { idle: '#2e1212', active: '#ff6b6b' },
 };
 
+// Left hand shifted left (palm x=10); right hand shifted right (palm x=542).
+// Same 38px finger width, 10px gaps — only x-positions changed.
 const KEYS = [
-  { id:'a', label:'A', xl: 65, xr:103, yt: 82, color: COLOR.pinky  },
-  { id:'s', label:'S', xl:113, xr:151, yt: 62, color: COLOR.ring   },
-  { id:'d', label:'D', xl:161, xr:199, yt: 52, color: COLOR.middle },
-  { id:'f', label:'F', xl:209, xr:247, yt: 67, color: COLOR.index  },
-  { id:'j', label:'J', xl:453, xr:491, yt: 67, color: COLOR.index  },
-  { id:'k', label:'K', xl:501, xr:539, yt: 52, color: COLOR.middle },
-  { id:'l', label:'L', xl:549, xr:587, yt: 62, color: COLOR.ring   },
-  { id:';', label:';', xl:597, xr:635, yt: 82, color: COLOR.pinky  },
+  { id:'a', label:'A', xl: 15, xr: 53, yt: 82, color: COLOR.pinky  },
+  { id:'s', label:'S', xl: 63, xr:101, yt: 62, color: COLOR.ring   },
+  { id:'d', label:'D', xl:111, xr:149, yt: 52, color: COLOR.middle },
+  { id:'f', label:'F', xl:159, xr:197, yt: 67, color: COLOR.index  },
+  { id:'j', label:'J', xl:583, xr:621, yt: 67, color: COLOR.index  },
+  { id:'k', label:'K', xl:631, xr:669, yt: 52, color: COLOR.middle },
+  { id:'l', label:'L', xl:679, xr:717, yt: 62, color: COLOR.ring   },
+  { id:';', label:';', xl:727, xr:765, yt: 82, color: COLOR.pinky  },
 ];
 
 const FINGER_BOTTOM = 172;
 const FINGER_RX     = 9;
 const NS            = 'http://www.w3.org/2000/svg';
 
-// ── Balloon constants ─────────────────────────────────────────────────
+// ── Balloon constants ─────────────────────────────────────────────────────────
 const BALLOON_R     = 24;
-const BALLOON_CEIL  = 27;   // min center y (ceiling)
-const BALLOON_FLOOR = 133;  // max center y — bottom of balloon at y=157, at the floor line
-const BALLOON_START = 80;
+const BALLOON_CEIL  = 30;   // min center y
+const BALLOON_START = 140;  // initial center y (mid-column)
+const BALLOON_FLOOR = 270;  // max center y — pops here (130px of fall from start)
 
-// gravity: px/frame², bounce: initial upward px/frame (negative = up)
+// gravity: px/frame², bounce: upward impulse on correct press (negative = up).
+// At 60 fps, easy free-fall from BALLOON_START to BALLOON_FLOOR takes ~0.43s;
+// medium halves that (~0.21s); hard halves again (~0.11s).
 const DIFFICULTY = {
-  easy:   { gravity: 0.055, bounce: -7.0  },
-  medium: { gravity: 0.120, bounce: -8.5  },
-  hard:   { gravity: 0.220, bounce: -10.5 },
+  easy:   { gravity: 0.45, bounce:  -8.5 },
+  medium: { gravity: 1.81, bounce: -17.0 },
+  hard:   { gravity: 7.22, bounce: -34.0 },
 };
 
 const MODES = ['simon', 'react', 'balloon'];
@@ -206,7 +209,7 @@ let mode       = 'simon';
 let difficulty = 'medium';
 let phase      = 'idle';   // idle | showing | input | wait | gameover
 let inputLock  = false;
-let gen        = 0;        // incremented on startGame; all async chains check this
+let gen        = 0;        // incremented on every startGame/switchMode; stale async chains bail on mismatch
 
 // Simon
 let sequence  = [];
@@ -215,14 +218,14 @@ let simonBest = 0;
 
 // React + Balloon share the "active target" pattern
 let reactScore  = 0;
-let reactTarget = null;   // id of the currently lit finger
-let reactLitAt  = 0;      // performance.now() when finger lit (React only)
+let reactTarget = null;
+let reactLitAt  = 0;
 
 // Balloon
 let balloonScore = 0;
-let balloonY   = BALLOON_START;
-let balloonVY  = 0;
-let rafId      = null;
+let balloonY     = BALLOON_START;
+let balloonVY    = 0;
+let rafId        = null;
 
 // ── LocalStorage ──────────────────────────────────────────────────────────────
 function makeLS(key) {
@@ -237,7 +240,7 @@ function makeLS(key) {
     },
   };
 }
-const reactLS = makeLS('simon-keys-react-best');
+const reactLS   = makeLS('simon-keys-react-best');
 const balloonLS = makeLS('simon-keys-balloon-best');
 
 // ── Build SVG fingers ─────────────────────────────────────────────────────────
@@ -272,7 +275,7 @@ const roundEl    = document.getElementById('round-num');
 const statusEl   = document.getElementById('status-msg');
 const bestEl     = document.getElementById('best-num');
 const startBtn   = document.getElementById('start-btn');
-const balloonSvg = document.getElementById('balloon-svg');
+const balloonGrp = document.getElementById('balloon-group');
 const diffSelect = document.getElementById('diff-select');
 
 const setStatus = s  => statusEl.textContent = s;
@@ -332,9 +335,9 @@ function switchMode(newMode) {
           : newMode === 'react' ? 'reaction trainer'
           : 'balloon');
   refreshBest();
-  startBtn.textContent = 'Press SPACE to start';
-  balloonSvg.style.display = newMode === 'balloon' ? 'block' : 'none';
-  diffSelect.style.display  = newMode === 'balloon' ? 'flex'  : 'none';
+  startBtn.textContent          = 'Press SPACE to start';
+  balloonGrp.style.display      = newMode === 'balloon' ? 'block' : 'none';
+  diffSelect.style.display      = newMode === 'balloon' ? 'flex'  : 'none';
   if (newMode === 'balloon') resetBalloon();
 }
 
@@ -430,27 +433,22 @@ function lightNextReact(g) {
 
 function reactionPts(ms) { return Math.max(1, Math.round(1000 - ms * 1.2)); }
 
-// ── Balloon mode ───────────────────────────────────────────────────────────
+// ── Balloon mode ──────────────────────────────────────────────────────────────
 function resetBalloon() {
   balloonY  = BALLOON_START;
   balloonVY = 0;
-  const grp = document.getElementById('balloon-group');
-  if (grp) grp.style.visibility = 'visible';
-  const body = document.getElementById('balloon-body');
-  if (body) {
-    body.setAttribute('r', String(BALLOON_R));
-    body.setAttribute('fill', '#ff6eb4');
-  }
-  const shine = document.getElementById('balloon-shine');
-  if (shine) shine.setAttribute('r', '7');
+  balloonGrp.style.display = 'block';
+  document.getElementById('balloon-body') .setAttribute('r',    String(BALLOON_R));
+  document.getElementById('balloon-body') .setAttribute('fill', '#ff6eb4');
+  document.getElementById('balloon-shine').setAttribute('r',    '7');
   updateBalloonPos();
 }
 
 function updateBalloonPos() {
   const cy = balloonY;
-  document.getElementById('balloon-body') .setAttribute('cy', cy);
-  document.getElementById('balloon-shine').setAttribute('cy', cy - 10);
-  document.getElementById('balloon-knot') .setAttribute('cy', cy + BALLOON_R + 2);
+  document.getElementById('balloon-body')  .setAttribute('cy', cy);
+  document.getElementById('balloon-shine') .setAttribute('cy', cy - 10);
+  document.getElementById('balloon-knot')  .setAttribute('cy', cy + BALLOON_R + 2);
   document.getElementById('balloon-string').setAttribute('y1', cy + BALLOON_R + 5);
   document.getElementById('balloon-string').setAttribute('y2', cy + BALLOON_R + 22);
 }
@@ -463,7 +461,6 @@ function beginBalloon(g) {
   if (gen !== g) return;
   resetBalloon();
   setStatus('');
-  // Light first finger, then start physics
   lightNextBalloon(g);
   rafId = requestAnimationFrame(makeBalloonTick(g));
 }
@@ -487,7 +484,7 @@ function makeBalloonTick(g) {
     if (balloonY >= BALLOON_FLOOR) {
       balloonY = BALLOON_FLOOR;
       updateBalloonPos();
-      balloonOver(g, null);   // floor hit — no wrong key
+      balloonOver(g, null);
       return;
     }
 
@@ -510,16 +507,12 @@ async function balloonOver(g, wrongKey) {
   if (wrongKey)    setFinger(wrongKey, 'wrong');
 
   // Pop: flash white + expand, then hide
-  const body  = document.getElementById('balloon-body');
-  const shine = document.getElementById('balloon-shine');
-  if (body) {
-    body.setAttribute('fill', '#fff');
-    body.setAttribute('r', String(BALLOON_R + 12));
-    shine.setAttribute('r', '0');
-  }
+  document.getElementById('balloon-body') .setAttribute('fill', '#fff');
+  document.getElementById('balloon-body') .setAttribute('r',    String(BALLOON_R + 12));
+  document.getElementById('balloon-shine').setAttribute('r',    '0');
   await sleep(110);
   if (gen !== g) return;
-  document.getElementById('balloon-group').style.visibility = 'hidden';
+  balloonGrp.style.display = 'none';
 
   if (wrongKey) {
     await sleep(400);
@@ -538,7 +531,6 @@ async function balloonOver(g, wrongKey) {
 document.addEventListener('keydown', async e => {
   const raw = e.key;
 
-  // Left / Right: cycle mode
   if (raw === 'ArrowLeft' || raw === 'ArrowRight') {
     e.preventDefault();
     const d = raw === 'ArrowRight' ? 1 : -1;
@@ -546,7 +538,6 @@ document.addEventListener('keydown', async e => {
     return;
   }
 
-  // Up / Down: cycle difficulty (only when not actively playing)
   if (raw === 'ArrowUp' || raw === 'ArrowDown') {
     e.preventDefault();
     if (phase === 'idle' || phase === 'gameover') {
@@ -567,21 +558,20 @@ document.addEventListener('keydown', async e => {
   e.preventDefault();
 
   if (phase === 'idle' || phase === 'gameover') { startGame(); return; }
-  // Block input if not in input phase, if locked, or if balloon has no active target yet
   if (phase !== 'input' || inputLock || (mode === 'balloon' && !reactTarget)) return;
 
   inputLock = true;
   const myGen = gen;
 
-  // ── Balloon branch ──────────────────────────────────────────────────────────
+  // ── Balloon branch ────────────────────────────────────────────────────────
   if (mode === 'balloon') {
     const was = reactTarget;
     if (key === was) {
       setFinger(was, 'off');
-      balloonVY = DIFFICULTY[difficulty].bounce;  // bounce up
+      balloonVY = DIFFICULTY[difficulty].bounce;
       balloonScore++;
       setRound(balloonScore);
-      lightNextBalloon(myGen);  // lights new finger, resets inputLock + reactTarget
+      lightNextBalloon(myGen);
     } else {
       await balloonOver(myGen, key);
     }
