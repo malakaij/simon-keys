@@ -98,12 +98,8 @@ h1 {
 
 <svg id="hands-svg" viewBox="0 0 700 310" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <filter id="glow-cyan" x="-70%" y="-70%" width="240%" height="240%">
+    <filter id="glow" x="-70%" y="-70%" width="240%" height="240%">
       <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="b"/>
-      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
-    <filter id="glow-red" x="-70%" y="-70%" width="240%" height="240%">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="b"/>
       <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
   </defs>
@@ -121,23 +117,31 @@ h1 {
 
 <script>
 // ── Key / finger definitions ──────────────────────────────────────────────────
-// Each key: { id, label, xl (left x), xr (right x), yt (tip y) }
+// Standard typing-tutor color convention: same finger type = same color.
+// idle: dark tint visible against the palm; active: bright saturated version.
+const COLOR = {
+  index:  { idle: '#1a2540', active: '#6eb0ff' },  // blue
+  middle: { idle: '#142814', active: '#6dd98f' },  // green
+  ring:   { idle: '#2e2508', active: '#ffd84d' },  // amber
+  pinky:  { idle: '#2e1212', active: '#ff6b6b' },  // red
+};
+
+// Each key: { id, label, xl (left x), xr (right x), yt (tip y), color }
 // Left hand:  A=pinky, S=ring, D=middle, F=index  (left→right)
 // Right hand: J=index, K=middle, L=ring, ;=pinky  (left→right)
 const KEYS = [
-  { id:'a', label:'A', xl: 65, xr:103, yt:102 },
-  { id:'s', label:'S', xl:113, xr:151, yt: 82 },
-  { id:'d', label:'D', xl:161, xr:199, yt: 72 },
-  { id:'f', label:'F', xl:209, xr:247, yt: 87 },
-  { id:'j', label:'J', xl:453, xr:491, yt: 87 },
-  { id:'k', label:'K', xl:501, xr:539, yt: 72 },
-  { id:'l', label:'L', xl:549, xr:587, yt: 82 },
-  { id:';', label:';', xl:597, xr:635, yt:102 },
+  { id:'a', label:'A', xl: 65, xr:103, yt: 82, color: COLOR.pinky  },
+  { id:'s', label:'S', xl:113, xr:151, yt: 62, color: COLOR.ring   },
+  { id:'d', label:'D', xl:161, xr:199, yt: 52, color: COLOR.middle },
+  { id:'f', label:'F', xl:209, xr:247, yt: 67, color: COLOR.index  },
+  { id:'j', label:'J', xl:453, xr:491, yt: 67, color: COLOR.index  },
+  { id:'k', label:'K', xl:501, xr:539, yt: 52, color: COLOR.middle },
+  { id:'l', label:'L', xl:549, xr:587, yt: 62, color: COLOR.ring   },
+  { id:';', label:';', xl:597, xr:635, yt: 82, color: COLOR.pinky  },
 ];
 
 const FINGER_BOTTOM = 172; // overlap palm top edge (162) by 10px
 const FINGER_RX     = 9;
-const BASE_COLOR    = '#16162a';
 const NS            = 'http://www.w3.org/2000/svg';
 
 // ── Build SVG finger shapes ───────────────────────────────────────────────────
@@ -160,14 +164,15 @@ KEYS.forEach(k => {
   group.appendChild(svgEl('path', {
     id:   'fp-' + k.id,
     d:    fingerPath(k.xl, k.xr, k.yt),
-    fill: BASE_COLOR,
+    fill: k.color.idle,
   }));
   group.appendChild(svgEl('text', {
     id:               'fl-' + k.id,
     x:                (k.xl + k.xr) / 2,
     y:                k.yt + 22,
     'text-anchor':    'middle',
-    fill:             '#303050',
+    fill:             k.color.active,
+    'fill-opacity':   '0.4',
     'font-family':    'Courier New, monospace',
     'font-size':      '12',
     'font-weight':    'bold',
@@ -196,20 +201,24 @@ const sleep     = ms => new Promise(r => setTimeout(r, ms));
 function setFinger(id, state) {
   const path  = document.getElementById('fp-' + id);
   const label = document.getElementById('fl-' + id);
-  if (!path) return;
+  const key   = KEYS.find(k => k.id === id);
+  if (!path || !key) return;
 
   if (state === 'active') {
-    path.setAttribute('fill', '#00e5ff');
-    path.setAttribute('filter', 'url(#glow-cyan)');
-    label.setAttribute('fill', '#001c22');
+    path.setAttribute('fill', key.color.active);
+    path.setAttribute('filter', 'url(#glow)');
+    label.setAttribute('fill', '#000');
+    label.setAttribute('fill-opacity', '0.6');
   } else if (state === 'wrong') {
-    path.setAttribute('fill', '#ff3355');
-    path.setAttribute('filter', 'url(#glow-red)');
-    label.setAttribute('fill', '#fff');
+    path.setAttribute('fill', '#fff');
+    path.setAttribute('filter', 'url(#glow)');
+    label.setAttribute('fill', '#000');
+    label.setAttribute('fill-opacity', '0.7');
   } else {
-    path.setAttribute('fill', BASE_COLOR);
+    path.setAttribute('fill', key.color.idle);
     path.removeAttribute('filter');
-    label.setAttribute('fill', '#303050');
+    label.setAttribute('fill', key.color.active);
+    label.setAttribute('fill-opacity', '0.4');
   }
 }
 
@@ -270,6 +279,14 @@ async function playSequence(g) {
 // ── Keyboard input ────────────────────────────────────────────────────────────
 document.addEventListener('keydown', async e => {
   const raw = e.key;
+
+  // Space starts / restarts from idle or game-over
+  if (raw === ' ') {
+    e.preventDefault();
+    if (phase === 'idle' || phase === 'gameover') startGame();
+    return;
+  }
+
   // Map semicolon (and colon from accidental shift) to the game key
   const key = (raw === ';' || raw === ':') ? ';' : raw.toLowerCase();
 
