@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Simon Keys</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #0d0d1a;
+  color: #888;
+  font-family: 'Courier New', monospace;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  gap: 18px;
+  padding: 20px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+h1 {
+  font-size: 1rem;
+  letter-spacing: 0.55em;
+  color: #00e5ff;
+  font-weight: normal;
+  text-transform: uppercase;
+}
+
+#hud {
+  display: flex;
+  align-items: baseline;
+  gap: 24px;
+}
+
+#round-num {
+  font-size: 2rem;
+  color: #ddd;
+  min-width: 2.5ch;
+  text-align: right;
+  line-height: 1;
+}
+
+#status-msg {
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #444;
+}
+
+#best-line {
+  font-size: 0.65rem;
+  letter-spacing: 0.2em;
+  color: #333;
+  text-transform: uppercase;
+}
+
+#best-line span {
+  color: #555;
+}
+
+#hands-svg {
+  width: min(700px, 96vw);
+  height: auto;
+  display: block;
+}
+
+#start-btn {
+  background: none;
+  border: 1px solid #00e5ff;
+  color: #00e5ff;
+  font-family: inherit;
+  font-size: 0.75rem;
+  letter-spacing: 0.38em;
+  text-transform: uppercase;
+  padding: 10px 42px;
+  cursor: pointer;
+  transition: background 0.15s;
+  outline: none;
+}
+
+#start-btn:hover  { background: rgba(0,229,255,0.07); }
+#start-btn:active { background: rgba(0,229,255,0.15); }
+#start-btn:focus-visible { outline: 1px solid #00e5ff; outline-offset: 3px; }
+</style>
+</head>
+<body>
+
+<h1>Simon Keys</h1>
+
+<div id="hud">
+  <span id="round-num">—</span>
+  <span id="status-msg">home row trainer</span>
+</div>
+
+<svg id="hands-svg" viewBox="0 0 700 310" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="glow-cyan" x="-70%" y="-70%" width="240%" height="240%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="glow-red" x="-70%" y="-70%" width="240%" height="240%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Palms (drawn first, fingers will overlap the top edge) -->
+  <rect x="60"  y="162" width="228" height="132" rx="20" fill="#16162a"/>
+  <rect x="412" y="162" width="228" height="132" rx="20" fill="#16162a"/>
+
+  <!-- Fingers are injected by JS -->
+  <g id="fingers-group"></g>
+</svg>
+
+<div id="best-line">best: <span id="best-num">—</span></div>
+<button id="start-btn">Start</button>
+
+<script>
+// ── Key / finger definitions ──────────────────────────────────────────────────
+// Each key: { id, label, xl (left x), xr (right x), yt (tip y) }
+// Left hand:  A=pinky, S=ring, D=middle, F=index  (left→right)
+// Right hand: J=index, K=middle, L=ring, ;=pinky  (left→right)
+const KEYS = [
+  { id:'a', label:'A', xl: 65, xr:103, yt:102 },
+  { id:'s', label:'S', xl:113, xr:151, yt: 82 },
+  { id:'d', label:'D', xl:161, xr:199, yt: 72 },
+  { id:'f', label:'F', xl:209, xr:247, yt: 87 },
+  { id:'j', label:'J', xl:453, xr:491, yt: 87 },
+  { id:'k', label:'K', xl:501, xr:539, yt: 72 },
+  { id:'l', label:'L', xl:549, xr:587, yt: 82 },
+  { id:';', label:';', xl:597, xr:635, yt:102 },
+];
+
+const FINGER_BOTTOM = 172; // overlap palm top edge (162) by 10px
+const FINGER_RX     = 9;
+const BASE_COLOR    = '#16162a';
+const NS            = 'http://www.w3.org/2000/svg';
+
+// ── Build SVG finger shapes ───────────────────────────────────────────────────
+function fingerPath(xl, xr, yt) {
+  const yb = FINGER_BOTTOM, r = FINGER_RX;
+  // Rounded top, flat bottom
+  return `M${xl},${yb} L${xl},${yt+r} Q${xl},${yt} ${xl+r},${yt}` +
+         ` L${xr-r},${yt} Q${xr},${yt} ${xr},${yt+r} L${xr},${yb}Z`;
+}
+
+function svgEl(tag, attrs, text) {
+  const el = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+
+const group = document.getElementById('fingers-group');
+KEYS.forEach(k => {
+  group.appendChild(svgEl('path', {
+    id:   'fp-' + k.id,
+    d:    fingerPath(k.xl, k.xr, k.yt),
+    fill: BASE_COLOR,
+  }));
+  group.appendChild(svgEl('text', {
+    id:               'fl-' + k.id,
+    x:                (k.xl + k.xr) / 2,
+    y:                k.yt + 22,
+    'text-anchor':    'middle',
+    fill:             '#303050',
+    'font-family':    'Courier New, monospace',
+    'font-size':      '12',
+    'font-weight':    'bold',
+    'pointer-events': 'none',
+  }, k.label));
+});
+
+// ── Game state ────────────────────────────────────────────────────────────────
+let sequence   = [];
+let playerIdx  = 0;
+let phase      = 'idle';   // idle | showing | input | wait | gameover
+let inputLock  = false;
+let gen        = 0;        // generation counter – cancels stale async chains
+let highScore  = 0;
+
+const roundEl  = document.getElementById('round-num');
+const statusEl = document.getElementById('status-msg');
+const bestEl   = document.getElementById('best-num');
+
+const setRound  = n  => roundEl.textContent  = n > 0 ? n : '—';
+const setStatus = s  => statusEl.textContent = s;
+const setBest   = n  => bestEl.textContent   = n > 0 ? n : '—';
+const sleep     = ms => new Promise(r => setTimeout(r, ms));
+
+// ── Finger visuals ────────────────────────────────────────────────────────────
+function setFinger(id, state) {
+  const path  = document.getElementById('fp-' + id);
+  const label = document.getElementById('fl-' + id);
+  if (!path) return;
+
+  if (state === 'active') {
+    path.setAttribute('fill', '#00e5ff');
+    path.setAttribute('filter', 'url(#glow-cyan)');
+    label.setAttribute('fill', '#001c22');
+  } else if (state === 'wrong') {
+    path.setAttribute('fill', '#ff3355');
+    path.setAttribute('filter', 'url(#glow-red)');
+    label.setAttribute('fill', '#fff');
+  } else {
+    path.setAttribute('fill', BASE_COLOR);
+    path.removeAttribute('filter');
+    label.setAttribute('fill', '#303050');
+  }
+}
+
+function resetFingers() {
+  KEYS.forEach(k => setFinger(k.id, 'off'));
+}
+
+// ── Core game logic ───────────────────────────────────────────────────────────
+function startGame() {
+  gen++;
+  sequence  = [];
+  playerIdx = 0;
+  inputLock = false;
+  setRound(0);
+  document.getElementById('start-btn').textContent = 'Restart';
+  resetFingers();
+  grow(gen);
+}
+
+function grow(g) {
+  if (gen !== g) return;
+  const pick = KEYS[Math.floor(Math.random() * KEYS.length)];
+  sequence.push(pick.id);
+  setRound(sequence.length);
+  playSequence(g);
+}
+
+async function playSequence(g) {
+  if (gen !== g) return;
+  phase = 'showing';
+  setStatus('watch...');
+
+  const lvl  = sequence.length;
+  const onMs = Math.max(260, 580 - lvl * 14);
+  const offMs= Math.max(55,  125 - lvl *  5);
+
+  await sleep(400);
+  if (gen !== g) return;
+
+  for (const id of sequence) {
+    setFinger(id, 'active');
+    await sleep(onMs);
+    if (gen !== g) return;
+    setFinger(id, 'off');
+    await sleep(offMs);
+    if (gen !== g) return;
+  }
+
+  await sleep(220);
+  if (gen !== g) return;
+
+  phase      = 'input';
+  playerIdx  = 0;
+  inputLock  = false;
+  setStatus('your turn');
+}
+
+// ── Keyboard input ────────────────────────────────────────────────────────────
+document.addEventListener('keydown', async e => {
+  const raw = e.key;
+  // Map semicolon (and colon from accidental shift) to the game key
+  const key = (raw === ';' || raw === ':') ? ';' : raw.toLowerCase();
+
+  if (!KEYS.find(k => k.id === key)) return;
+  e.preventDefault();
+
+  if (phase === 'idle' || phase === 'gameover') {
+    startGame();
+    return;
+  }
+
+  if (phase !== 'input' || inputLock) return;
+  inputLock = true;
+
+  const myGen    = gen;
+  const expected = sequence[playerIdx];
+
+  if (key === expected) {
+    // Correct key
+    setFinger(key, 'active');
+    await sleep(155);
+    if (gen !== myGen) return;
+    setFinger(key, 'off');
+    playerIdx++;
+
+    if (playerIdx === sequence.length) {
+      // Round complete
+      if (sequence.length > highScore) {
+        highScore = sequence.length;
+        setBest(highScore);
+      }
+      phase = 'wait';
+      setStatus('nice!');
+      await sleep(620);
+      if (gen !== myGen) return;
+      grow(myGen);
+    } else {
+      inputLock = false;
+    }
+  } else {
+    // Wrong key
+    phase = 'gameover';
+    setFinger(key, 'wrong');
+    await sleep(750);
+    if (gen !== myGen) return;
+    setFinger(key, 'off');
+    setStatus('wrong key — press start');
+  }
+});
+
+document.getElementById('start-btn').addEventListener('click', startGame);
+</script>
+</body>
+</html>
